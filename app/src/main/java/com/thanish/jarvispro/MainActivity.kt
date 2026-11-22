@@ -24,6 +24,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var recognizer: SpeechRecognizer? = null
     private var ttsReady = false
     private var latestCode = ""
+    private var pendingFiles: Map<String, String> = emptyMap()
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -84,23 +85,39 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setOnClickListener { askAi(codeMode = false) }
         }
         val code = Button(this).apply {
-            text = "SELF-CODING: GENERATE CODE"
+            text = "SELF-CODING: GENERATE FILES"
             setOnClickListener { askAi(codeMode = true) }
         }
         val saveCode = Button(this).apply {
-            text = "SAVE GENERATED CODE TO WORKSPACE"
+            text = "SAVE RAW AI OUTPUT"
             setOnClickListener {
                 if (latestCode.isBlank()) status.text = "Generate code first"
                 else try {
                     val file = CodeWorkspace.save(this@MainActivity, latestCode)
-                    status.text = "Saved: ${file.name} • Review only, not executed"
+                    status.text = "Raw output saved: ${file.name}"
                 } catch (e: Exception) {
                     status.text = "Workspace save failed: ${e.message}"
                 }
             }
         }
+        val approveFiles = Button(this).apply {
+            text = "APPROVE & SAVE FILES TO STAGING"
+            setOnClickListener {
+                if (pendingFiles.isEmpty()) {
+                    status.text = "Generate and validate files first"
+                } else try {
+                    val saved = CodeWorkspace.saveApprovedFiles(this@MainActivity, pendingFiles)
+                    pendingFiles = emptyMap()
+                    status.text = "Approved ${saved.size} file(s) in private staging folder"
+                    output.text = "Saved for review only:\n" + saved.joinToString("\n") +
+                        "\n\nNo project files were changed. Nothing was executed or built."
+                } catch (e: Exception) {
+                    status.text = "Staging save failed: ${e.message}"
+                }
+            }
+        }
         output = TextView(this).apply {
-            text = "AI response and generated code will appear here."
+            text = "AI response and generated files will appear here."
             textSize = 14f
             setTextColor(Color.WHITE)
             setPadding(10, 18, 10, 18)
@@ -117,7 +134,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             text = "ACCESSIBILITY SETTINGS"
             setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
-        listOf(title, status, apiKey, saveKey, prompt, ask, code, saveCode, output, mic, test, access)
+        listOf(title, status, apiKey, saveKey, prompt, ask, code, approveFiles, saveCode, output, mic, test, access)
             .forEach { layout.addView(it) }
         setContentView(scroll)
     }
@@ -134,13 +151,28 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
         status.text = "JARVIS AI THINKING..."
+        if (codeMode) {
+            pendingFiles = emptyMap()
+            latestCode = ""
+        }
         executor.execute {
             try {
                 val result = GeminiApi.generate(key, request, codeMode)
+                val parsed = if (codeMode) CodeWorkspace.parseFiles(result) else emptyMap()
                 runOnUiThread {
-                    output.text = result
                     latestCode = if (codeMode) result else ""
-                    status.text = if (codeMode) "CODE GENERATED • REVIEW BEFORE SAVING" else "AI RESPONSE READY"
+                    pendingFiles = parsed
+                    output.text = if (codeMode) {
+                        if (parsed.isEmpty()) {
+                            "AI response received, but no valid file bundle was detected.\n\n$result"
+                        } else {
+                            "Files ready for approval:\n" + parsed.keys.joinToString("\n") +
+                                "\n\nPreview of first file:\n" + parsed.values.first().take(5000)
+                        }
+                    } else result
+                    status.text = if (codeMode) {
+                        if (parsed.isEmpty()) "CODE RECEIVED • FILE FORMAT INVALID" else " ${parsed.size} FILE(S) READY • APPROVAL REQUIRED"
+                    } else "AI RESPONSE READY"
                     if (!codeMode) speak(result)
                 }
             } catch (e: Exception) {
