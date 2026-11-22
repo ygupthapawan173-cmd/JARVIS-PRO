@@ -262,7 +262,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
 
     private fun handleVoiceCommand(raw: String): Boolean {
-        val command = raw.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9\\s]"), " ").replace(Regex("\\s+"), " ").trim()
+        val command = raw.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}\\s]"), " ").replace(Regex("\\s+"), " ").trim()
         fun reply(message: String) { status.text = message; speak(message) }
 
         if (command.contains("stop listening") || command.contains("stop jarvis")) {
