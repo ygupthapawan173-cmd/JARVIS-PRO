@@ -15,50 +15,62 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Gemini Live native-audio session.
- *
- * Firebase app configuration (google-services.json) must be added before this
- * can connect at runtime. This class deliberately does not use the legacy
- * REST Gemini key stored by SecureKeyStore.
+ * Keeps a Live API WebSocket ready while the local Vosk detector listens.
+ * Microphone capture starts only after the local wake word is detected.
  */
 @OptIn(PublicPreviewAPI::class)
 class GeminiLiveVoice(
     private val onStatus: (String) -> Unit = {}
 ) {
     private var session: LiveSession? = null
+    private var connecting = false
 
-    suspend fun start(enableInterruptions: Boolean = true) {
-        if (session?.isClosed() == false) {
-            onStatus("Gemini Live session already connected")
-            return
-        }
-
-        onStatus("Connecting to Gemini Live…")
-        try {
-            val instruction = content {
-                text(
-                    "You are JARVIS PRO, a fast and helpful Telugu-English voice assistant. " +
+    private fun createModel() = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel(
+        modelName = "gemini-2.5-flash-native-audio-preview-12-2025",
+        generationConfig = liveGenerationConfig {
+            responseModality = ResponseModality.AUDIO
+            speechConfig = SpeechConfig(voice = Voice("Puck"))
+        },
+        systemInstruction = content {
+            text(
+                "You are JARVIS PRO, a fast and helpful Telugu-English voice assistant. " +
                     "Understand Telugu, English, and mixed Telugu-English. Reply naturally in " +
                     "the same language the user speaks. Keep spoken answers concise and direct. " +
                     "Do not use markdown, headings, or long introductions."
-                )
-            }
-
-            val model = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel(
-                modelName = "gemini-2.5-flash-native-audio-preview-12-2025",
-                generationConfig = liveGenerationConfig {
-                    responseModality = ResponseModality.AUDIO
-                    speechConfig = SpeechConfig(voice = Voice("Puck"))
-                },
-                systemInstruction = instruction
             )
+        }
+    )
 
-            val live = model.connect()
+    /** Open the WebSocket before the wake phrase, without taking over the microphone. */
+    suspend fun prepare() {
+        if (session?.isClosed() == false || connecting) return
+        connecting = true
+        try {
+            onStatus("Preparing fast Gemini Live connection…")
+            session = createModel().connect()
+            onStatus("Gemini Live ready • Say Hey Jarvis")
+        } catch (error: Exception) {
+            Log.w("GeminiLiveVoice", "Live preconnect failed; will retry after wake", error)
+            onStatus("Live connection not ready • will retry after wake")
+        } finally {
+            connecting = false
+        }
+    }
+
+    suspend fun start(enableInterruptions: Boolean = true) {
+        var live = session
+        if (live == null || live.isClosed()) {
+            onStatus("Connecting to Gemini Live…")
+            live = createModel().connect()
             session = live
+        }
+        try {
             live.startAudioConversation(enableInterruptions = enableInterruptions)
             onStatus("Gemini Live voice conversation active")
         } catch (error: Exception) {
-            Log.e("GeminiLiveVoice", "Live voice connection failed", error)
+            Log.e("GeminiLiveVoice", "Live voice start failed", error)
+            try { live.close() } catch (_: Exception) {}
+            session = null
             onStatus("Gemini Live error: ${error.message ?: error.javaClass.simpleName}")
             throw error
         }
