@@ -27,9 +27,13 @@ object VoskModelManager {
             error("Cannot create Vosk model folder: ${root.absolutePath}")
         }
 
-        val archive = File(root, "model.zip")
+        // Keep the downloaded ZIP at its final working path. Renaming a file in
+        // app-private storage can fail on some Android filesystems; extraction
+        // can safely read the .part file directly, so no rename is necessary.
         val partial = File(root, "model.zip.part")
-        partial.delete()
+        if (partial.exists() && !partial.delete()) {
+            error("Cannot remove incomplete model download: ${partial.absolutePath}")
+        }
         onProgress("Downloading offline English wake-word model…")
 
         val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
@@ -64,18 +68,14 @@ object VoskModelManager {
             connection.disconnect()
         }
 
-        if (archive.exists() && !archive.delete()) {
+        if (!partial.isFile || partial.length() < 4L) {
             partial.delete()
-            error("Cannot replace old model archive: ${archive.absolutePath}")
-        }
-        if (!partial.renameTo(archive)) {
-            partial.delete()
-            error("Cannot finalize downloaded model archive in: ${root.absolutePath}")
+            error("Downloaded Vosk model archive is empty or incomplete")
         }
 
         onProgress("Installing wake-word model…")
         try {
-            ZipInputStream(BufferedInputStream(archive.inputStream())).use { zip ->
+            ZipInputStream(BufferedInputStream(partial.inputStream())).use { zip ->
                 var entry = zip.nextEntry
                 val canonicalRoot = root.canonicalFile
                 while (entry != null) {
@@ -98,7 +98,7 @@ object VoskModelManager {
         } catch (e: Exception) {
             throw IllegalStateException("Vosk model extraction failed: ${e.message ?: e.javaClass.simpleName}", e)
         } finally {
-            archive.delete()
+            partial.delete()
         }
 
         require(File(model, "am").isDirectory && File(model, "conf").isDirectory) {
