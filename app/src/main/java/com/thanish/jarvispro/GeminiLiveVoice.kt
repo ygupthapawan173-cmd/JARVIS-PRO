@@ -89,6 +89,5 @@ class GeminiLiveVoice(
                 }
             }
         }
-        onStatus("Gemini Live voice stopped")
     }
 }
