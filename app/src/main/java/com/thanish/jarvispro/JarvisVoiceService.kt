@@ -36,6 +36,7 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
     private val channelId = "jarvis_voice_listener"
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val liveVoice = GeminiLiveVoice(::updateNotification)
+    @Volatile private var modelLoading = false
 
     override fun onCreate() {
         super.onCreate()
@@ -65,7 +66,9 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startListener() {
+        if (modelLoading || detector != null || handlingWake.get()) return
         isStopping = false
+        modelLoading = true
         val notification = buildNotification("Preparing offline wake-word model…")
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -75,8 +78,12 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
         Thread {
             try {
                 val model = VoskModelManager.ensureModel(this) { message -> updateNotification(message) }
-                handler.post { startWakeDetector(model.absolutePath) }
+                handler.post {
+                    modelLoading = false
+                    if (!isStopping) startWakeDetector(model.absolutePath)
+                }
             } catch (e: Exception) {
+                modelLoading = false
                 updateNotification("Wake-word setup failed: ${e.message ?: "unknown error"}")
                 stopSelf()
             }
@@ -107,8 +114,12 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
                         }
                         try {
                             liveVoice.start(enableInterruptions = true)
-                        } catch (_: Exception) {
-                            // Keep the existing speech-to-text + REST path as a fallback.
+                            // Restore the wake listener if the Live session ends unexpectedly.
+                            if (!isStopping) resumeWake(modelPath)
+                        } catch (error: Exception) {
+                            updateNotification(
+                                "Gemini Live unavailable • ${error.message ?: "connection failed"} • Using speech fallback"
+                            )
                             startCommandRecognition(modelPath)
                         }
                     }
@@ -219,6 +230,7 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
 
     private fun stopListener() {
         isStopping = true
+        modelLoading = false
         handlingWake.set(false)
         handler.removeCallbacksAndMessages(null)
         detector?.stop()
