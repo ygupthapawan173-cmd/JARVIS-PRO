@@ -69,11 +69,11 @@ class GeminiLiveVoice(
             var lastError: Exception? = null
 
             // A short retry handles transient network/WebSocket startup failures.
-            repeat(2) { attempt ->
+            for (attempt in 0..1) {
                 try {
                     live = createModel().connect()
                     lastError = null
-                    return@repeat
+                    break
                 } catch (error: Exception) {
                     lastError = error
                     Log.e("GeminiLiveVoice", "Live connect attempt ${attempt + 1} failed", error)
