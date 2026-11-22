@@ -221,6 +221,9 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
         recognizer?.destroy()
         recognizer = null
         tts?.stop()
+        // Stop the Live session without posting a new notification after the
+        // foreground notification has been removed. The old behavior recreated
+        // a stale "Gemini Live voice stopped" notification during service shutdown.
         serviceScope.launch { liveVoice.stop() }
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
