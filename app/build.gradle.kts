@@ -26,7 +26,10 @@ android {
 dependencies {
     implementation("com.alphacephei:vosk-android:0.3.47")
 
-    // Firebase AI Logic Live API for bidirectional low-latency voice.
+    // Firebase AI Logic Live API.
     implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
     implementation("com.google.firebase:firebase-ai")
+
+    // Debug-only provider: never package this provider in a release build.
+    debugImplementation("com.google.firebase:firebase-appcheck-debug")
 }
