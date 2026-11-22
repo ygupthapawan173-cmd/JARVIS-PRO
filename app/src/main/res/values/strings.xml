@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">JARVIS PRO</string>
+    <string name="accessibility_description">JARVIS PRO accessibility actions, enabled only with user permission.</string>
+</resources>
