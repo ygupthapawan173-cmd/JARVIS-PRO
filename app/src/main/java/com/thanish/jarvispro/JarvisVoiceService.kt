@@ -41,7 +41,6 @@ class JarvisVoiceService : Service() {
         Thread {
             try {
                 val model = VoskModelManager.ensureModel(this) { message -> updateNotification(message) }
-                if (isDestroyed) return@Thread
                 detector?.stop()
                 detector = WakeWordDetector(model.absolutePath, { phrase ->
                     updateNotification("Wake word detected: $phrase • Tap to open JARVIS")
