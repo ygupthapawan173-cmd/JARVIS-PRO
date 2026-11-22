@@ -345,7 +345,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startListening()
-        if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startWakeService()
+        if (requestCode == 101) {
+            val microphoneGranted =
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            val notificationsGranted = android.os.Build.VERSION.SDK_INT < 33 ||
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            if (microphoneGranted) {
+                if (!notificationsGranted) {
+                    status.text = "Notification permission denied • Starting voice service; enable notifications for status"
+                }
+                startWakeService()
+            } else {
+                status.text = "Microphone permission is required for Hey Jarvis"
+            }
+        }
     }
 
     override fun onDestroy() {
