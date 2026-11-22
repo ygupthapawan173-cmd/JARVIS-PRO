@@ -14,6 +14,7 @@ import android.speech.RecognitionListener
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.widget.*
+import com.thanish.jarvispro.ai.FreeLLMClient
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -23,6 +24,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var prompt: EditText
     private lateinit var output: TextView
     private lateinit var apiKey: EditText
+    private lateinit var freeApiKey: EditText
+    private lateinit var freeLlmClient: FreeLLMClient
     private var tts: TextToSpeech? = null
     private var recognizer: SpeechRecognizer? = null
     private var ttsReady = false
@@ -32,6 +35,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        freeLlmClient = FreeLLMClient(this)
         // Initialize the debug-only App Check provider before Firebase AI is used.
         try {
             Class.forName("com.thanish.jarvispro.DebugAppCheckInitializer")
@@ -85,6 +89,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+        freeApiKey = EditText(this).apply {
+            hint = "FreeLLMAPI unified key"
+            setHintTextColor(Color.LTGRAY)
+            setTextColor(Color.WHITE)
+            inputType = 129
+        }
+
+        val saveFreeKey = Button(this).apply {
+            text = "SAVE FREELLMAPI KEY"
+            setOnClickListener {
+                val key = freeApiKey.text.toString().trim()
+                if (key.isBlank()) {
+                    status.text = "Enter FreeLLMAPI key"
+                } else {
+                    freeLlmClient.saveApiKey(key)
+                    freeApiKey.text.clear()
+                    status.text = "FreeLLMAPI key saved on device"
+                }
+            }
+        }
+
         prompt = EditText(this).apply {
             hint = "Ask JARVIS or describe code you want to create..."
             setHintTextColor(Color.LTGRAY)
@@ -163,7 +188,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             text = "ACCESSIBILITY SETTINGS"
             setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
-        listOf(title, status, apiKey, saveKey, prompt, ask, code, approveFiles, saveCode, output, mic, commandHelp, wakeStart, wakeStop, test, access)
+        listOf(title, status, apiKey, saveKey, freeApiKey, saveFreeKey, prompt, ask, code, approveFiles, saveCode, output, mic, commandHelp, wakeStart, wakeStop, test, access)
             .forEach { layout.addView(it) }
         setContentView(scroll)
     }
@@ -174,20 +199,65 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             status.text = "Type your request first"
             return
         }
-        val key = try { SecureKeyStore.load(this) } catch (_: Exception) { null }
-        if (key.isNullOrBlank()) {
-            status.text = "Save your Gemini API key first"
+
+        val useFreeApi = freeLlmClient.hasApiKey()
+        val geminiKey = try {
+            SecureKeyStore.load(this)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (!useFreeApi && geminiKey.isNullOrBlank()) {
+            status.text = "Save FreeLLMAPI or Gemini API key first"
             return
         }
-        status.text = "JARVIS AI THINKING..."
+
+        status.text = if (useFreeApi) {
+            "FREELLMAPI THINKING..."
+        } else {
+            "GEMINI THINKING..."
+        }
+
         if (codeMode) {
             pendingFiles = emptyMap()
             latestCode = ""
         }
+
         executor.execute {
             try {
-                val result = GeminiApi.generate(key, request, codeMode)
-                val parsed = if (codeMode) CodeWorkspace.parseFiles(result) else emptyMap()
+                val result = if (useFreeApi) {
+                    val aiPrompt = if (codeMode) {
+                        """
+You are JARVIS PRO coding assistant.
+Return ONLY one valid JSON object. No markdown fences or explanations.
+Required format:
+{"files":[{"path":"app/src/main/java/com/thanish/jarvispro/Example.kt","content":"complete Kotlin source code"}]}
+Return 1 to 8 complete files.
+Allowed paths:
+- Kotlin: app/src/main/java/com/thanish/jarvispro/
+- XML: app/src/main/res/layout/
+Never return paths containing .., absolute paths, or backslashes.
+User request:
+$request
+                        """.trimIndent()
+                    } else {
+                        """
+You are JARVIS PRO, a helpful AI assistant.
+Reply naturally and clearly in Telugu unless the user asks for another language.
+$request
+                        """.trimIndent()
+                    }
+                    freeLlmClient.ask(aiPrompt)
+                } else {
+                    GeminiApi.generate(geminiKey!!, request, codeMode)
+                }
+
+                val parsed = if (codeMode) {
+                    CodeWorkspace.parseFiles(result)
+                } else {
+                    emptyMap()
+                }
+
                 runOnUiThread {
                     latestCode = if (codeMode) result else ""
                     pendingFiles = parsed
@@ -195,28 +265,34 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         if (parsed.isEmpty()) {
                             "AI response received, but no valid file bundle was detected.\n\n$result"
                         } else {
-                            "Files ready for approval:\n" + parsed.keys.joinToString("\n") +
-                                "\n\nPreview of first file:\n" + parsed.values.first().take(5000)
+                            "Files ready for approval:\n" +
+                                parsed.keys.joinToString("\n") +
+                                "\n\nPreview of first file:\n" +
+                                parsed.values.first().take(5000)
                         }
-                    } else result
+                    } else {
+                        result
+                    }
+
                     status.text = if (codeMode) {
-                        if (parsed.isEmpty()) "CODE RECEIVED • FILE FORMAT INVALID" else " ${parsed.size} FILE(S) READY • APPROVAL REQUIRED"
-                    } else "AI RESPONSE READY"
+                        if (parsed.isEmpty()) {
+                            "CODE RECEIVED • FILE FORMAT INVALID"
+                        } else {
+                            "${parsed.size} FILE(S) READY • APPROVAL REQUIRED"
+                        }
+                    } else {
+                        if (useFreeApi) "FREELLMAPI RESPONSE READY"
+                        else "GEMINI RESPONSE READY"
+                    }
+
                     if (!codeMode) speak(result)
                 }
             } catch (e: Exception) {
-                runOnUiThread { status.text = "AI error: ${e.message ?: "Request failed"}" }
+                runOnUiThread {
+                    status.text = "AI error: ${e.message ?: "Request failed"}"
+                }
             }
         }
-    }
-
-    override fun onInit(result: Int) {
-        if (result == TextToSpeech.SUCCESS) {
-            val languageResult = tts?.setLanguage(Locale("te", "IN"))
-            ttsReady = languageResult != TextToSpeech.LANG_MISSING_DATA &&
-                    languageResult != TextToSpeech.LANG_NOT_SUPPORTED
-            status.text = if (ttsReady) "JARVIS READY • Telugu TTS available" else "JARVIS READY • Install Telugu TTS voice"
-        } else status.text = "Text-to-Speech initialization failed"
     }
 
     private fun speak(text: String) {
