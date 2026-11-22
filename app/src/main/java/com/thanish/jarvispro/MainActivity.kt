@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.hardware.camera2.CameraManager
 import android.os.Bundle
 import android.graphics.Color
 import android.speech.RecognizerIntent
@@ -130,11 +132,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             text = "TEST TELUGU VOICE"
             setOnClickListener { speak("నమస్కారం! నేను జార్విస్. మీకు ఎలా సహాయం చేయగలను?") }
         }
+        val commandHelp = Button(this).apply {
+            text = "VOICE COMMANDS"
+            setOnClickListener {
+                output.text = "Try: Open YouTube, Open WhatsApp, Flashlight on/off, Volume up/down, Stop listening.\\nTap SPEAK TO JARVIS and say a command."
+            }
+        }
         val access = Button(this).apply {
             text = "ACCESSIBILITY SETTINGS"
             setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
-        listOf(title, status, apiKey, saveKey, prompt, ask, code, approveFiles, saveCode, output, mic, test, access)
+        listOf(title, status, apiKey, saveKey, prompt, ask, code, approveFiles, saveCode, output, mic, commandHelp, test, access)
             .forEach { layout.addView(it) }
         setContentView(scroll)
     }
@@ -217,7 +225,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     ?: "మాటలు గుర్తించబడలేదు"
                 prompt.setText(spoken)
                 status.text = "VOICE INPUT RECEIVED"
-                askAi(codeMode = false)
+                if (!handleVoiceCommand(spoken)) askAi(codeMode = false)
             }
             override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -229,6 +237,66 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         recognizer?.startListening(intent)
+    }
+
+
+    private fun handleVoiceCommand(raw: String): Boolean {
+        val command = raw.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9\\s]"), " ").replace(Regex("\\s+"), " ").trim()
+        fun reply(message: String) { status.text = message; speak(message) }
+
+        if (command.contains("stop listening") || command.contains("stop jarvis")) {
+            recognizer?.cancel()
+            reply("Listening stopped")
+            return true
+        }
+        if (command.contains("flashlight on") || command.contains("torch on") || command.contains("ఫ్లాష్ లైట్ ఆన్") || command.contains("టార్చ్ ఆన్")) return setFlashlight(true, ::reply)
+        if (command.contains("flashlight off") || command.contains("torch off") || command.contains("ఫ్లాష్ లైట్ ఆఫ్") || command.contains("టార్చ్ ఆఫ్")) return setFlashlight(false, ::reply)
+
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        if (command.contains("volume up") || command.contains("increase volume") || command.contains("వాల్యూమ్ పెంచు")) {
+            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+            reply("Volume increased"); return true
+        }
+        if (command.contains("volume down") || command.contains("decrease volume") || command.contains("వాల్యూమ్ తగ్గించు")) {
+            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+            reply("Volume decreased"); return true
+        }
+
+        val app = when {
+            command.contains("open youtube") || command == "youtube" -> "com.google.android.youtube"
+            command.contains("open whatsapp") || command == "whatsapp" -> "com.whatsapp"
+            command.contains("open instagram") || command == "instagram" -> "com.instagram.android"
+            command.contains("open chrome") || command == "chrome" -> "com.android.chrome"
+            command.contains("open settings") -> "com.android.settings"
+            else -> null
+        }
+        if (app != null) {
+            val launch = packageManager.getLaunchIntentForPackage(app)
+            if (launch == null) reply("That app is not installed") else {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launch)
+                reply("Opening " + app.substringAfterLast("."))
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun setFlashlight(enabled: Boolean, reply: (String) -> Unit): Boolean {
+        return try {
+            val camera = getSystemService(CAMERA_SERVICE) as CameraManager
+            val cameraId = camera.cameraIdList.firstOrNull { id ->
+                camera.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            }
+            if (cameraId == null) reply("Flashlight is not available") else {
+                camera.setTorchMode(cameraId, enabled)
+                reply(if (enabled) "Flashlight on" else "Flashlight off")
+            }
+            true
+        } catch (e: Exception) {
+            reply("Flashlight control failed")
+            true
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
