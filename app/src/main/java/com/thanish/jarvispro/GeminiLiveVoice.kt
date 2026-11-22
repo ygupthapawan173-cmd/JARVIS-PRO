@@ -14,10 +14,6 @@ import com.google.firebase.ai.type.liveGenerationConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Keeps a Live API WebSocket ready while the local Vosk detector listens.
- * Microphone capture starts only after the local wake word is detected.
- */
 @OptIn(PublicPreviewAPI::class)
 class GeminiLiveVoice(
     private val onStatus: (String) -> Unit = {}
@@ -41,17 +37,29 @@ class GeminiLiveVoice(
         }
     )
 
-    /** Open the WebSocket before the wake phrase, without taking over the microphone. */
+    private fun errorDetails(error: Throwable): String {
+        var current: Throwable? = error
+        var depth = 0
+        while (current?.cause != null && depth < 4) {
+            current = current.cause
+            depth++
+        }
+        val type = current?.javaClass?.simpleName ?: error.javaClass.simpleName
+        val message = current?.message ?: error.message ?: "No error details"
+        return "$type: $message".replace(Regex("\\s+"), " ").take(220)
+    }
+
+    /** Preconnect before the wake phrase so the user does not wait for a new socket. */
     suspend fun prepare() {
         if (session?.isClosed() == false || connecting) return
         connecting = true
         try {
-            onStatus("Preparing fast Gemini Live connection…")
+            onStatus("Preparing Gemini Live connection…")
             session = createModel().connect()
             onStatus("Gemini Live ready • Say Hey Jarvis")
         } catch (error: Exception) {
-            Log.w("GeminiLiveVoice", "Live preconnect failed; will retry after wake", error)
-            onStatus("Live connection not ready • will retry after wake")
+            Log.e("GeminiLiveVoice", "Live preconnect failed", error)
+            onStatus("Live setup failed • ${errorDetails(error)}")
         } finally {
             connecting = false
         }
@@ -71,7 +79,7 @@ class GeminiLiveVoice(
             Log.e("GeminiLiveVoice", "Live voice start failed", error)
             try { live.close() } catch (_: Exception) {}
             session = null
-            onStatus("Gemini Live error: ${error.message ?: error.javaClass.simpleName}")
+            onStatus("Gemini Live error • ${errorDetails(error)}")
             throw error
         }
     }
