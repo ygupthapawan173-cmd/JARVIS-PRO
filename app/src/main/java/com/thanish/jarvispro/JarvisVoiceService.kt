@@ -65,6 +65,7 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startListener() {
+        isStopping = false
         val notification = buildNotification("Preparing offline wake-word model…")
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -93,7 +94,8 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
                     updateNotification("Hey Jarvis detected • Listening for your command…")
                     detector?.stop()
                     detector = null
-                    // Allow AudioRecord to release the microphone before SpeechRecognizer starts.
+                    // The Live WebSocket is preconnected while Vosk listens.
+                    // Keep only a short microphone handoff pause.
                     handler.postDelayed({
                         serviceScope.launch {
                             try {
@@ -103,11 +105,13 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
                                 startCommandRecognition(modelPath)
                             }
                         }
-                    }, 800)
+                    }, 150)
                 }
             }
         }, ::updateNotification)
         detector?.start()
+        // Establish the network session before the user says the wake phrase.
+        serviceScope.launch { liveVoice.prepare() }
     }
 
     private fun startCommandRecognition(modelPath: String) {
