@@ -83,10 +83,26 @@ class WakeWordDetector(
         return value.contains("hey jarvis") || Regex("\\bjarvis\\b").containsMatchIn(value)
     }
 
-    fun stop() {
+    /**
+     * Stop recording and wait until the worker has released AudioRecord.
+     * This prevents Vosk and Gemini Live from opening the microphone at once.
+     */
+    fun stopAndWait(timeoutMs: Long = 4000): Boolean {
         running.set(false)
+        val thread = worker
         try { recorder?.stop() } catch (_: Exception) {}
-        worker?.interrupt()
-        worker = null
+        thread?.interrupt()
+        if (thread != null && thread !== Thread.currentThread()) {
+            try { thread.join(timeoutMs) } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        val stopped = thread == null || !thread.isAlive
+        if (stopped && worker === thread) worker = null
+        return stopped
+    }
+
+    fun stop() {
+        stopAndWait()
     }
 }
