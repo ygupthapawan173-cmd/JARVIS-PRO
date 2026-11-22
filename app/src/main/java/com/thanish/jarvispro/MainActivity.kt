@@ -11,73 +11,142 @@ import android.speech.SpeechRecognizer
 import android.speech.RecognitionListener
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Toast
+import android.widget.*
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
-
     private lateinit var status: TextView
+    private lateinit var prompt: EditText
+    private lateinit var output: TextView
+    private lateinit var apiKey: EditText
     private var tts: TextToSpeech? = null
     private var recognizer: SpeechRecognizer? = null
     private var ttsReady = false
+    private var latestCode = ""
+    private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(4, 8, 22)
         window.navigationBarColor = Color.rgb(4, 8, 22)
-
         tts = TextToSpeech(this, this)
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(28, 32, 28, 32)
+            setPadding(22, 24, 22, 24)
             setBackgroundColor(Color.rgb(4, 8, 22))
         }
-
+        val scroll = ScrollView(this).apply { addView(layout) }
         val title = TextView(this).apply {
-            text = "J.A.R.V.I.S"
-            textSize = 30f
+            text = "J.A.R.V.I.S PRO"
+            textSize = 27f
             setTextColor(Color.rgb(0, 220, 255))
             gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 18)
         }
-
         status = TextView(this).apply {
-            text = "VOICE ENGINE STARTING..."
-            textSize = 17f
+            text = "VOICE + AI SYSTEM STARTING"
+            textSize = 15f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(0, 28, 0, 28)
+            setPadding(0, 8, 0, 14)
         }
-
+        apiKey = EditText(this).apply {
+            hint = "Gemini API key (encrypted on this device)"
+            setHintTextColor(Color.LTGRAY)
+            setTextColor(Color.WHITE)
+            inputType = 129
+        }
+        val saveKey = Button(this).apply {
+            text = "SAVE API KEY SECURELY"
+            setOnClickListener {
+                val key = apiKey.text.toString().trim()
+                if (key.isBlank()) status.text = "Enter your Gemini API key first"
+                else try {
+                    SecureKeyStore.save(this@MainActivity, key)
+                    apiKey.text.clear()
+                    status.text = "API key saved encrypted on device"
+                } catch (e: Exception) {
+                    status.text = "Secure key save failed: ${e.message}"
+                }
+            }
+        }
+        prompt = EditText(this).apply {
+            hint = "Ask JARVIS or describe code you want to create..."
+            setHintTextColor(Color.LTGRAY)
+            setTextColor(Color.WHITE)
+            minLines = 2
+            gravity = Gravity.TOP
+        }
+        val ask = Button(this).apply {
+            text = "ASK JARVIS AI"
+            setOnClickListener { askAi(codeMode = false) }
+        }
+        val code = Button(this).apply {
+            text = "SELF-CODING: GENERATE CODE"
+            setOnClickListener { askAi(codeMode = true) }
+        }
+        val saveCode = Button(this).apply {
+            text = "SAVE GENERATED CODE TO WORKSPACE"
+            setOnClickListener {
+                if (latestCode.isBlank()) status.text = "Generate code first"
+                else try {
+                    val file = CodeWorkspace.save(this@MainActivity, latestCode)
+                    status.text = "Saved: ${file.name} • Review only, not executed"
+                } catch (e: Exception) {
+                    status.text = "Workspace save failed: ${e.message}"
+                }
+            }
+        }
+        output = TextView(this).apply {
+            text = "AI response and generated code will appear here."
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(10, 18, 10, 18)
+        }
         val mic = Button(this).apply {
             text = "🎙 SPEAK TO JARVIS"
             setOnClickListener { startListening() }
         }
-
         val test = Button(this).apply {
             text = "TEST TELUGU VOICE"
-            setOnClickListener {
-                speak("నమస్కారం! నేను జార్విస్. మీకు ఎలా సహాయం చేయగలను?")
-            }
+            setOnClickListener { speak("నమస్కారం! నేను జార్విస్. మీకు ఎలా సహాయం చేయగలను?") }
         }
-
         val access = Button(this).apply {
             text = "ACCESSIBILITY SETTINGS"
-            setOnClickListener {
-                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
+        listOf(title, status, apiKey, saveKey, prompt, ask, code, saveCode, output, mic, test, access)
+            .forEach { layout.addView(it) }
+        setContentView(scroll)
+    }
+
+    private fun askAi(codeMode: Boolean) {
+        val request = prompt.text.toString().trim()
+        if (request.isBlank()) {
+            status.text = "Type your request first"
+            return
+        }
+        val key = try { SecureKeyStore.load(this) } catch (_: Exception) { null }
+        if (key.isNullOrBlank()) {
+            status.text = "Save your Gemini API key first"
+            return
+        }
+        status.text = "JARVIS AI THINKING..."
+        executor.execute {
+            try {
+                val result = GeminiApi.generate(key, request, codeMode)
+                runOnUiThread {
+                    output.text = result
+                    latestCode = if (codeMode) result else ""
+                    status.text = if (codeMode) "CODE GENERATED • REVIEW BEFORE SAVING" else "AI RESPONSE READY"
+                    if (!codeMode) speak(result)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { status.text = "AI error: ${e.message ?: "Request failed"}" }
             }
         }
-
-        layout.addView(title)
-        layout.addView(status)
-        layout.addView(mic)
-        layout.addView(test)
-        layout.addView(access)
-        setContentView(layout)
     }
 
     override fun onInit(result: Int) {
@@ -85,22 +154,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             val languageResult = tts?.setLanguage(Locale("te", "IN"))
             ttsReady = languageResult != TextToSpeech.LANG_MISSING_DATA &&
                     languageResult != TextToSpeech.LANG_NOT_SUPPORTED
-            status.text = if (ttsReady) {
-                "JARVIS READY • Telugu voice available"
-            } else {
-                "JARVIS READY • Telugu TTS not installed"
-            }
-        } else {
-            status.text = "Text-to-Speech initialization failed"
-        }
+            status.text = if (ttsReady) "JARVIS READY • Telugu TTS available" else "JARVIS READY • Install Telugu TTS voice"
+        } else status.text = "Text-to-Speech initialization failed"
     }
 
     private fun speak(text: String) {
-        if (!ttsReady) {
-            Toast.makeText(this, "Telugu voice is not available on this phone", Toast.LENGTH_LONG).show()
-            return
-        }
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "JARVIS_TTS")
+        if (ttsReady) tts?.speak(text.take(3500), TextToSpeech.QUEUE_FLUSH, null, "JARVIS_TTS")
     }
 
     private fun startListening() {
@@ -108,38 +167,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 100)
             return
         }
-
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             status.text = "Speech recognition service unavailable"
             return
         }
-
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this)
-
         recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                status.text = "LISTENING... మాట్లాడండి"
-            }
+            override fun onReadyForSpeech(params: Bundle?) { status.text = "LISTENING... మాట్లాడండి" }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {
-                status.text = "PROCESSING..."
-            }
-            override fun onError(error: Int) {
-                status.text = "Voice error: $error • Try again"
-            }
+            override fun onEndOfSpeech() { status.text = "PROCESSING..." }
+            override fun onError(error: Int) { status.text = "Voice error: $error • Try again" }
             override fun onResults(results: Bundle?) {
-                val words = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val spoken = words?.firstOrNull() ?: "మాటలు గుర్తించబడలేదు"
-                status.text = "YOU SAID:\n$spoken"
-                speak("మీరు చెప్పారు: $spoken")
+                val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    ?: "మాటలు గుర్తించబడలేదు"
+                prompt.setText(spoken)
+                status.text = "VOICE INPUT RECEIVED"
+                askAi(codeMode = false)
             }
             override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "te-IN")
@@ -149,22 +199,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         recognizer?.startListening(intent)
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 100 && grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startListening()
-        }
+        if (requestCode == 100 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startListening()
     }
 
     override fun onDestroy() {
         recognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
+        executor.shutdownNow()
         super.onDestroy()
     }
 }
