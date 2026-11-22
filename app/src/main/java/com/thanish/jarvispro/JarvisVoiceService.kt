@@ -92,20 +92,26 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
             if (handlingWake.compareAndSet(false, true)) {
                 handler.post {
                     updateNotification("Hey Jarvis detected • Listening for your command…")
-                    detector?.stop()
+                    val wakeDetector = detector
                     detector = null
-                    // The Live WebSocket is preconnected while Vosk listens.
-                    // Keep only a short microphone handoff pause.
-                    handler.postDelayed({
-                        serviceScope.launch {
-                            try {
-                                liveVoice.start(enableInterruptions = true)
-                            } catch (_: Exception) {
-                                // Keep the existing speech-to-text + REST path as a fallback.
-                                startCommandRecognition(modelPath)
-                            }
+                    serviceScope.launch {
+                        // AudioRecord must be fully released before Gemini opens the mic.
+                        val microphoneReleased = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                            wakeDetector?.stopAndWait(5000) ?: true
                         }
-                    }, 150)
+                        if (isStopping) return@launch
+                        if (!microphoneReleased) {
+                            updateNotification("Microphone is still busy • Switching to speech fallback")
+                            startCommandRecognition(modelPath)
+                            return@launch
+                        }
+                        try {
+                            liveVoice.start(enableInterruptions = true)
+                        } catch (_: Exception) {
+                            // Keep the existing speech-to-text + REST path as a fallback.
+                            startCommandRecognition(modelPath)
+                        }
+                    }
                 }
             }
         }, ::updateNotification)
