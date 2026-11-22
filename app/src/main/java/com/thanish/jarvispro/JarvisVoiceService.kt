@@ -19,6 +19,11 @@ import android.speech.tts.TextToSpeech
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
     private var detector: WakeWordDetector? = null
@@ -29,6 +34,8 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
     private val executor = Executors.newSingleThreadExecutor()
     private val handlingWake = AtomicBoolean(false)
     private val channelId = "jarvis_voice_listener"
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val liveVoice = GeminiLiveVoice(::updateNotification)
 
     override fun onCreate() {
         super.onCreate()
@@ -87,7 +94,16 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
                     detector?.stop()
                     detector = null
                     // Allow AudioRecord to release the microphone before SpeechRecognizer starts.
-                    handler.postDelayed({ startCommandRecognition(modelPath) }, 800)
+                    handler.postDelayed({
+                        serviceScope.launch {
+                            try {
+                                liveVoice.start(enableInterruptions = true)
+                            } catch (_: Exception) {
+                                // Keep the existing speech-to-text + REST path as a fallback.
+                                startCommandRecognition(modelPath)
+                            }
+                        }
+                    }, 800)
                 }
             }
         }, ::updateNotification)
@@ -201,6 +217,7 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
         recognizer?.destroy()
         recognizer = null
         tts?.stop()
+        serviceScope.launch { liveVoice.stop() }
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
@@ -232,6 +249,7 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
         stopListener()
         tts?.shutdown()
         executor.shutdownNow()
+        serviceScope.cancel()
         super.onDestroy()
     }
 
