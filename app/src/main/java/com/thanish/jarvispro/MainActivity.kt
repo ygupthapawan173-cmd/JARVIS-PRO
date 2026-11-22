@@ -19,6 +19,7 @@ import java.util.concurrent.Executors
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var status: TextView
+    private var statusMessageForStartup: String? = null
     private lateinit var prompt: EditText
     private lateinit var output: TextView
     private lateinit var apiKey: EditText
@@ -31,6 +32,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Install the Firebase App Check debug provider before any Firebase AI call.
+        // This initializer exists only in the debug source set.
+        if (BuildConfig.DEBUG) {
+            runCatching {
+                Class.forName("com.thanish.jarvispro.DebugAppCheckInitializer")
+                    .getMethod("initialize", android.content.Context::class.java)
+                    .invoke(null, this)
+            }.onFailure { error ->
+                android.util.Log.e("JARVIS-Firebase", "App Check debug initialization failed", error)
+                statusMessageForStartup = "Firebase App Check setup failed: ${error.cause?.message ?: error.message}"
+            }
+        }
         window.statusBarColor = Color.rgb(4, 8, 22)
         window.navigationBarColor = Color.rgb(4, 8, 22)
         tts = TextToSpeech(this, this)
@@ -49,7 +62,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(0, 8, 0, 18)
         }
         status = TextView(this).apply {
-            text = "VOICE + AI SYSTEM STARTING"
+            text = statusMessageForStartup ?: "VOICE + AI SYSTEM STARTING"
             textSize = 15f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
