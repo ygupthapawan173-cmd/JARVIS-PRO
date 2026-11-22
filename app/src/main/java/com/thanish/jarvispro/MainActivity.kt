@@ -32,17 +32,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Install the Firebase App Check debug provider before any Firebase AI call.
-        // This initializer exists only in the debug source set.
-        runCatching {
-            runCatching {
-                Class.forName("com.thanish.jarvispro.DebugAppCheckInitializer")
-                    .getMethod("initialize", android.content.Context::class.java)
-                    .invoke(null, this)
-            }.onFailure { error ->
-                android.util.Log.i("JARVIS-Firebase", "Debug App Check initializer unavailable or failed", error)
-                statusMessageForStartup = "Firebase debug setup: ${error.cause?.message ?: error.message}"
-            }
+        // Initialize the debug-only App Check provider before Firebase AI is used.
+        try {
+            Class.forName("com.thanish.jarvispro.DebugAppCheckInitializer")
+                .getMethod("initialize", android.content.Context::class.java)
+                .invoke(null, this)
+        } catch (error: Exception) {
+            android.util.Log.e("JARVIS-Firebase", "Debug App Check initialization failed", error)
+            statusMessageForStartup = "Firebase debug setup: ${error.cause?.message ?: error.message}"
+        }
         window.statusBarColor = Color.rgb(4, 8, 22)
         window.navigationBarColor = Color.rgb(4, 8, 22)
         tts = TextToSpeech(this, this)
