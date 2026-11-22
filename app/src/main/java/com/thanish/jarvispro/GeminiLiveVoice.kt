@@ -11,18 +11,20 @@ import com.google.firebase.ai.type.SpeechConfig
 import com.google.firebase.ai.type.Voice
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.liveGenerationConfig
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 @OptIn(PublicPreviewAPI::class)
 class GeminiLiveVoice(
     private val onStatus: (String) -> Unit = {}
 ) {
     private var session: LiveSession? = null
-    private var connecting = false
+    private var starting = false
 
     private fun createModel() = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel(
-        modelName = "gemini-2.5-flash-native-audio-preview-12-2025",
+        // Current Gemini Developer API Live model; 3.1 replaces the older 2.5 preview.
+        modelName = "gemini-3.1-flash-live-preview",
         generationConfig = liveGenerationConfig {
             responseModality = ResponseModality.AUDIO
             speechConfig = SpeechConfig(voice = Voice("Puck"))
@@ -38,49 +40,59 @@ class GeminiLiveVoice(
     )
 
     private fun errorDetails(error: Throwable): String {
+        val chain = mutableListOf<String>()
         var current: Throwable? = error
         var depth = 0
-        while (current?.cause != null && depth < 4) {
+        while (current != null && depth < 5) {
+            val message = current.message?.replace(Regex("\\s+"), " ")?.take(180)
+            chain += (current.javaClass.simpleName + if (message.isNullOrBlank()) "" else ": $message")
             current = current.cause
             depth++
         }
-        val type = current?.javaClass?.simpleName ?: error.javaClass.simpleName
-        val message = current?.message ?: error.message ?: "No error details"
-        return "$type: $message".replace(Regex("\\s+"), " ").take(220)
+        return chain.joinToString(" <- ").take(420)
     }
 
-    /** Preconnect before the wake phrase so the user does not wait for a new socket. */
+    /**
+     * Do not keep an idle WebSocket open while Vosk waits for the wake phrase.
+     * The Live socket is created only after "Hey Jarvis" is detected.
+     */
     suspend fun prepare() {
-        if (session?.isClosed() == false || connecting) return
-        connecting = true
-        try {
-            onStatus("Preparing Gemini Live connection…")
-            session = createModel().connect()
-            onStatus("Gemini Live ready • Say Hey Jarvis")
-        } catch (error: Exception) {
-            Log.e("GeminiLiveVoice", "Live preconnect failed", error)
-            onStatus("Live setup failed • ${errorDetails(error)}")
-        } finally {
-            connecting = false
-        }
+        onStatus("Ready • Gemini Live connects after wake word")
     }
 
     suspend fun start(enableInterruptions: Boolean = true) {
-        var live = session
-        if (live == null || live.isClosed()) {
-            onStatus("Connecting to Gemini Live…")
-            live = createModel().connect()
-            session = live
-        }
+        if (starting) return
+        starting = true
         try {
-            live.startAudioConversation(enableInterruptions = enableInterruptions)
+            onStatus("Connecting to Gemini Live…")
+            var live: LiveSession? = null
+            var lastError: Exception? = null
+
+            // A short retry handles transient network/WebSocket startup failures.
+            repeat(2) { attempt ->
+                try {
+                    live = createModel().connect()
+                    lastError = null
+                    return@repeat
+                } catch (error: Exception) {
+                    lastError = error
+                    Log.e("GeminiLiveVoice", "Live connect attempt ${attempt + 1} failed", error)
+                    if (attempt == 0) delay(800)
+                }
+            }
+            if (live == null) throw (lastError ?: IllegalStateException("Live connection failed"))
+
+            session = live
+            live!!.startAudioConversation(enableInterruptions = enableInterruptions)
             onStatus("Gemini Live voice conversation active")
         } catch (error: Exception) {
             Log.e("GeminiLiveVoice", "Live voice start failed", error)
-            try { live.close() } catch (_: Exception) {}
+            try { session?.close() } catch (_: Exception) {}
             session = null
-            onStatus("Gemini Live error • ${errorDetails(error)}")
+            onStatus("Gemini Live failed • ${errorDetails(error)}")
             throw error
+        } finally {
+            starting = false
         }
     }
 
