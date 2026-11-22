@@ -138,11 +138,22 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 output.text = "Try: Open YouTube, Open WhatsApp, Flashlight on/off, Volume up/down, Stop listening.\\nTap SPEAK TO JARVIS and say a command."
             }
         }
+        val wakeStart = Button(this).apply {
+            text = "START ALWAYS-ON WAKE WORD"
+            setOnClickListener { requestWakePermissionsAndStart() }
+        }
+        val wakeStop = Button(this).apply {
+            text = "STOP WAKE WORD LISTENER"
+            setOnClickListener {
+                startService(Intent(this@MainActivity, JarvisVoiceService::class.java).setAction(JarvisVoiceService.ACTION_STOP))
+                status.text = "Wake-word listener stopped"
+            }
+        }
         val access = Button(this).apply {
             text = "ACCESSIBILITY SETTINGS"
             setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
-        listOf(title, status, apiKey, saveKey, prompt, ask, code, approveFiles, saveCode, output, mic, commandHelp, test, access)
+        listOf(title, status, apiKey, saveKey, prompt, ask, code, approveFiles, saveCode, output, mic, commandHelp, wakeStart, wakeStop, test, access)
             .forEach { layout.addView(it) }
         setContentView(scroll)
     }
@@ -299,9 +310,31 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun requestWakePermissionsAndStart() {
+        val needed = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+            needed.add(Manifest.permission.RECORD_AUDIO)
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (needed.isNotEmpty()) {
+            requestPermissions(needed.toTypedArray(), 101)
+        } else startWakeService()
+    }
+
+    private fun startWakeService() {
+        try {
+            val service = Intent(this, JarvisVoiceService::class.java).setAction(JarvisVoiceService.ACTION_START)
+            if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+            status.text = "Starting wake-word listener… keep JARVIS open until notification appears"
+        } catch (e: Exception) {
+            status.text = "Could not start wake-word service: ${e.message}"
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 100 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startListening()
+        if (requestCode == 100 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startListening()\n        if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) startWakeService()
     }
 
     override fun onDestroy() {
