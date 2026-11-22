@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
 }
 android {
     namespace = "com.thanish.jarvispro"
@@ -26,6 +27,6 @@ dependencies {
     implementation("com.alphacephei:vosk-android:0.3.47")
 
     // Firebase AI Logic Live API for bidirectional low-latency voice.
-    implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
+    implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
     implementation("com.google.firebase:firebase-ai")
 }
