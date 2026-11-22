@@ -31,5 +31,6 @@ dependencies {
     implementation("com.google.firebase:firebase-ai")
 
     // Debug-only provider: never package this provider in a release build.
+    debugImplementation("com.google.firebase:firebase-appcheck")
     debugImplementation("com.google.firebase:firebase-appcheck-debug")
 }
